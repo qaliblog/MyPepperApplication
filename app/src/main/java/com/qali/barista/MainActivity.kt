@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             BaristaTheme {
-                val viewModel: BaristaViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+                val viewModel: BaristaViewModel = viewModel()
                 BaristaApp(viewModel)
             }
         }
