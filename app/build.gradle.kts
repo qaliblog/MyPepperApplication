@@ -2,14 +2,15 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    id("kotlin-kapt")
 }
 
 android {
-    namespace = "com.example.mypepperapplication"
+    namespace = "com.qali.barista"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.mypepperapplication"
+        applicationId = "com.qali.barista"
         minSdk = 23
         targetSdk = 35
         versionCode = 1
@@ -42,6 +43,27 @@ android {
 dependencies {
     //noinspection UseTomlInstead
     implementation("com.aldebaran:qisdk:1.7.5")
+
+    // Camera and scanning dependencies
+    implementation("androidx.camera:camera-core:1.3.1")
+    implementation("androidx.camera:camera-camera2:1.3.1")
+    implementation("androidx.camera:camera-lifecycle:1.3.1")
+    implementation("androidx.camera:camera-view:1.3.1")
+    
+    // ML Kit for barcode scanning
+    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    
+    // 3D model rendering
+    implementation("com.google.android.filament:filament-android:1.45.0")
+    implementation("com.google.android.filament:filament-utils-android:1.45.0")
+    
+    // Image loading and processing
+    implementation("io.coil-kt:coil-compose:2.5.0")
+    
+    // Database for storing items
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

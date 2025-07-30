@@ -1,4 +1,4 @@
-package com.example.mypepperapplication.ui.theme
+package com.qali.barista.ui.theme
 
 import android.app.Activity
 import android.os.Build
@@ -34,7 +34,7 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
-fun MyPepperApplicationTheme(
+fun BaristaTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,
