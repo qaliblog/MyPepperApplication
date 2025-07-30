@@ -47,6 +47,14 @@ import org.tensorflow.lite.task.vision.detector.Detection
 import org.tensorflow.lite.task.vision.detector.ObjectDetector.ObjectDetectorOptions
 import org.tensorflow.lite.support.image.TensorImage
 import android.graphics.Bitmap
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.window.Dialog
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
+import com.google.android.filament.utils.ModelViewer
+import android.view.SurfaceView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -199,8 +207,9 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     var hasCameraPermission by remember { mutableStateOf(false) }
     var detectedObject by remember { mutableStateOf<String?>(null) }
     var detector by remember { mutableStateOf<ObjectDetector?>(null) }
+    var labelMap by remember { mutableStateOf<List<String>>(emptyList()) }
 
-    // Load TFLite model
+    // Load TFLite model and label map
     LaunchedEffect(Unit) {
         hasCameraPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.CAMERA
@@ -211,8 +220,19 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
                 .setScoreThreshold(0.5f)
                 .build()
             detector = ObjectDetector.createFromFileAndOptions(
-                context, "ssd_mobilenet_v1.tflite", options
+                context, "detect.tflite", options
             )
+        }
+        if (labelMap.isEmpty()) {
+            val labels = mutableListOf<String>()
+            try {
+                context.assets.open("labelmap.txt").use { input ->
+                    BufferedReader(InputStreamReader(input)).useLines { lines ->
+                        lines.forEach { labels.add(it) }
+                    }
+                }
+            } catch (_: Exception) {}
+            labelMap = labels
         }
     }
 
@@ -246,7 +266,7 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
             .padding(paddingValues)
     )
 
-    LaunchedEffect(cameraProviderFuture, detector) {
+    LaunchedEffect(cameraProviderFuture, detector, labelMap) {
         val cameraProvider = cameraProviderFuture.get()
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
@@ -257,13 +277,15 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
             .build()
         imageAnalyzer.setAnalyzer(executor) { imageProxy ->
             val bitmap = imageProxyToBitmap(imageProxy)
-            if (bitmap != null && detector != null) {
+            if (bitmap != null && detector != null && labelMap.isNotEmpty()) {
                 val tensorImage = TensorImage.fromBitmap(bitmap)
                 val results = detector!!.detect(tensorImage)
-                val label = results.firstOrNull()?.categories?.firstOrNull()?.label
+                val category = results.firstOrNull()?.categories?.firstOrNull()
+                val labelIdx = category?.index ?: -1
+                val label = if (labelIdx in labelMap.indices) labelMap[labelIdx] else null
                 if (label != null && detectedObject != label) {
                     detectedObject = label
-                    val modelFile = if (label.lowercase() == "pizza") "pizza.glb" else null
+                    val modelFile = if (label.lowercase().contains("pizza")) "pizza.glb" else null
                     onObjectDetected(label, modelFile)
                 }
             }
@@ -299,6 +321,7 @@ fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
 
 @Composable
 fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
+    var show3DModel by remember { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -360,7 +383,7 @@ fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
                                 fontWeight = FontWeight.Bold
                             )
                             if (item.model3dUrl != null) {
-                                TextButton(onClick = { /* Show 3D model viewer */ }) {
+                                TextButton(onClick = { show3DModel = item.model3dUrl }) {
                                     Text("View 3D Model")
                                 }
                             }
@@ -369,6 +392,30 @@ fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
                 }
             }
         }
+    }
+    if (show3DModel != null) {
+        Model3DDialog(modelFile = show3DModel!!) { show3DModel = null }
+    }
+}
+
+@Composable
+fun Model3DDialog(modelFile: String, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        AndroidView(
+            factory = { context ->
+                val surfaceView = SurfaceView(context)
+                val modelViewer = ModelViewer(surfaceView)
+                // Load the GLB model from assets
+                val assetManager = context.assets
+                val input = assetManager.open(modelFile)
+                val bytes = input.readBytes()
+                input.close()
+                modelViewer.loadModelGlb(bytes)
+                modelViewer.transformToUnitCube()
+                surfaceView
+            },
+            modifier = Modifier.size(400.dp, 400.dp)
+        )
     }
 }
 
