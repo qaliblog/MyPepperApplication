@@ -1,4 +1,4 @@
-package com.example.mypepperapplication.ui.theme
+package com.qali.barista.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
