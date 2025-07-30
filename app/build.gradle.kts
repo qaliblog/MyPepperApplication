@@ -79,4 +79,5 @@ dependencies {
 
     // Coil (image loading, 2.3.0 is compatible)
     implementation("io.coil-kt:coil-compose:2.3.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
 }
