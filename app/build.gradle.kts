@@ -40,6 +40,15 @@ android {
     }
 }
 
+kapt {
+    arguments {
+        arg("room.schemaLocation", "$projectDir/schemas")
+        arg("room.incremental", "true")
+        arg("room.expandProjection", "true")
+        arg("room.skipQueryVerification", "true")
+    }
+}
+
 dependencies {
     //noinspection UseTomlInstead
     implementation("com.aldebaran:qisdk:1.7.5")
