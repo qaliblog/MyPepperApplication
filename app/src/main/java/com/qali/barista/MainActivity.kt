@@ -24,6 +24,22 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qali.barista.ui.BaristaViewModel
 import com.qali.barista.ui.FoodItem
 import com.qali.barista.ui.theme.BaristaTheme
+import android.util.Size
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.LuminanceSource
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,7 +108,9 @@ fun BaristaApp(viewModel: BaristaViewModel) {
         ) { paddingValues ->
             when (selectedTab) {
                 0 -> HomeScreen(paddingValues)
-                1 -> ScanScreen(paddingValues)
+                1 -> ScanScreen(paddingValues) { barcode ->
+                    viewModel.addItem(barcode, 0.0, "Scanned item")
+                }
                 2 -> InventoryScreen(items, paddingValues)
                 3 -> Models3DScreen(paddingValues)
             }
@@ -165,40 +183,90 @@ fun HomeScreen(paddingValues: PaddingValues) {
 }
 
 @Composable
-fun ScanScreen(paddingValues: PaddingValues) {
-    Column(
+fun ScanScreen(paddingValues: PaddingValues, onBarcodeScanned: (String) -> Unit = {}) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+    val previewView = remember { PreviewView(context) }
+    val executor = remember { Executors.newSingleThreadExecutor() }
+    var hasCameraPermission by remember { mutableStateOf(false) }
+    var scannedBarcode by remember { mutableStateOf<String?>(null) }
+
+    // Request camera permission
+    LaunchedEffect(Unit) {
+        hasCameraPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    if (!hasCameraPermission) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("Camera permission required to scan items.")
+        }
+        return
+    }
+
+    AndroidView(
+        factory = { previewView },
         modifier = Modifier
             .fillMaxSize()
             .padding(paddingValues)
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.Search,
-            contentDescription = "Scan",
-            modifier = Modifier.size(120.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "Scan Food Items",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Point your camera at food items to scan and add them to your inventory",
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(
-            onClick = { /* Implement camera scanning */ }
-        ) {
-            Icon(Icons.Default.Add, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Start Scanning")
+    )
+
+    LaunchedEffect(cameraProviderFuture) {
+        val cameraProvider = cameraProviderFuture.get()
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
         }
+        val imageAnalyzer = ImageAnalysis.Builder()
+            .setTargetResolution(Size(1280, 720))
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+        imageAnalyzer.setAnalyzer(executor) { imageProxy ->
+            val barcode = scanBarcodeFromImageProxy(imageProxy)
+            if (barcode != null && scannedBarcode != barcode) {
+                scannedBarcode = barcode
+                onBarcodeScanned(barcode)
+            }
+            imageProxy.close()
+        }
+        cameraProvider.unbindAll()
+        cameraProvider.bindToLifecycle(
+            lifecycleOwner,
+            CameraSelector.DEFAULT_BACK_CAMERA,
+            preview,
+            imageAnalyzer
+        )
+    }
+}
+
+fun scanBarcodeFromImageProxy(imageProxy: ImageProxy): String? {
+    val buffer = imageProxy.planes[0].buffer
+    val bytes = ByteArray(buffer.remaining())
+    buffer.get(bytes)
+    val width = imageProxy.width
+    val height = imageProxy.height
+    val yuvImage = android.graphics.YuvImage(bytes, android.graphics.ImageFormat.NV21, width, height, null)
+    val out = java.io.ByteArrayOutputStream()
+    yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), 100, out)
+    val jpegBytes = out.toByteArray()
+    val bitmap = android.graphics.BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+    val intArray = IntArray(bitmap.width * bitmap.height)
+    bitmap.getPixels(intArray, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+    val source: LuminanceSource = RGBLuminanceSource(bitmap.width, bitmap.height, intArray)
+    val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
+    return try {
+        val result = MultiFormatReader().decode(binaryBitmap)
+        result.text
+    } catch (e: Exception) {
+        null
     }
 }
 
