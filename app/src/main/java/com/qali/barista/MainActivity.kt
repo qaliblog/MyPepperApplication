@@ -42,6 +42,11 @@ import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import java.util.concurrent.Executors
 import androidx.compose.ui.viewinterop.AndroidView
+import org.tensorflow.lite.task.vision.detector.ObjectDetector
+import org.tensorflow.lite.task.vision.detector.Detection
+import org.tensorflow.lite.task.vision.detector.ObjectDetector.ObjectDetectorOptions
+import org.tensorflow.lite.support.image.TensorImage
+import android.graphics.Bitmap
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -110,8 +115,8 @@ fun BaristaApp(viewModel: BaristaViewModel) {
         ) { paddingValues ->
             when (selectedTab) {
                 0 -> HomeScreen(paddingValues)
-                1 -> ScanScreen(paddingValues) { barcode ->
-                    viewModel.addItem(barcode, 0.0, "Scanned item")
+                1 -> ScanScreen(paddingValues) { barcode, modelFile ->
+                    viewModel.addItem(barcode, 0.0, "Scanned item", modelFile)
                 }
                 2 -> InventoryScreen(items, paddingValues)
                 3 -> Models3DScreen(paddingValues)
@@ -185,25 +190,36 @@ fun HomeScreen(paddingValues: PaddingValues) {
 }
 
 @Composable
-fun ScanScreen(paddingValues: PaddingValues, onBarcodeScanned: (String) -> Unit = {}) {
+fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?) -> Unit = { _, _ -> }) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     val previewView = remember { PreviewView(context) }
     val executor = remember { Executors.newSingleThreadExecutor() }
     var hasCameraPermission by remember { mutableStateOf(false) }
-    var scannedBarcode by remember { mutableStateOf<String?>(null) }
+    var detectedObject by remember { mutableStateOf<String?>(null) }
+    var detector by remember { mutableStateOf<ObjectDetector?>(null) }
+
+    // Load TFLite model
+    LaunchedEffect(Unit) {
+        hasCameraPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (detector == null) {
+            val options = ObjectDetectorOptions.builder()
+                .setMaxResults(1)
+                .setScoreThreshold(0.5f)
+                .build()
+            detector = ObjectDetector.createFromFileAndOptions(
+                context, "ssd_mobilenet_v1.tflite", options
+            )
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { granted -> hasCameraPermission = granted }
     )
-
-    LaunchedEffect(Unit) {
-        hasCameraPermission = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-    }
 
     if (!hasCameraPermission) {
         Column(
@@ -230,7 +246,7 @@ fun ScanScreen(paddingValues: PaddingValues, onBarcodeScanned: (String) -> Unit 
             .padding(paddingValues)
     )
 
-    LaunchedEffect(cameraProviderFuture) {
+    LaunchedEffect(cameraProviderFuture, detector) {
         val cameraProvider = cameraProviderFuture.get()
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
@@ -240,10 +256,16 @@ fun ScanScreen(paddingValues: PaddingValues, onBarcodeScanned: (String) -> Unit 
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
         imageAnalyzer.setAnalyzer(executor) { imageProxy ->
-            val barcode = scanBarcodeFromImageProxy(imageProxy)
-            if (barcode != null && scannedBarcode != barcode) {
-                scannedBarcode = barcode
-                onBarcodeScanned(barcode)
+            val bitmap = imageProxyToBitmap(imageProxy)
+            if (bitmap != null && detector != null) {
+                val tensorImage = TensorImage.fromBitmap(bitmap)
+                val results = detector!!.detect(tensorImage)
+                val label = results.firstOrNull()?.categories?.firstOrNull()?.label
+                if (label != null && detectedObject != label) {
+                    detectedObject = label
+                    val modelFile = if (label.lowercase() == "pizza") "pizza.glb" else null
+                    onObjectDetected(label, modelFile)
+                }
             }
             imageProxy.close()
         }
@@ -257,27 +279,22 @@ fun ScanScreen(paddingValues: PaddingValues, onBarcodeScanned: (String) -> Unit 
     }
 }
 
-fun scanBarcodeFromImageProxy(imageProxy: ImageProxy): String? {
-    val buffer = imageProxy.planes[0].buffer
-    val bytes = ByteArray(buffer.remaining())
-    buffer.get(bytes)
-    val width = imageProxy.width
-    val height = imageProxy.height
-    val yuvImage = android.graphics.YuvImage(bytes, android.graphics.ImageFormat.NV21, width, height, null)
+fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
+    val yBuffer = imageProxy.planes[0].buffer
+    val uBuffer = imageProxy.planes[1].buffer
+    val vBuffer = imageProxy.planes[2].buffer
+    val ySize = yBuffer.remaining()
+    val uSize = uBuffer.remaining()
+    val vSize = vBuffer.remaining()
+    val nv21 = ByteArray(ySize + uSize + vSize)
+    yBuffer.get(nv21, 0, ySize)
+    vBuffer.get(nv21, ySize, vSize)
+    uBuffer.get(nv21, ySize + vSize, uSize)
+    val yuvImage = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, imageProxy.width, imageProxy.height, null)
     val out = java.io.ByteArrayOutputStream()
-    yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), 100, out)
-    val jpegBytes = out.toByteArray()
-    val bitmap = android.graphics.BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-    val intArray = IntArray(bitmap.width * bitmap.height)
-    bitmap.getPixels(intArray, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-    val source: LuminanceSource = RGBLuminanceSource(bitmap.width, bitmap.height, intArray)
-    val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
-    return try {
-        val result = MultiFormatReader().decode(binaryBitmap)
-        result.text
-    } catch (e: Exception) {
-        null
-    }
+    yuvImage.compressToJpeg(android.graphics.Rect(0, 0, imageProxy.width, imageProxy.height), 100, out)
+    val imageBytes = out.toByteArray()
+    return android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
 }
 
 @Composable
@@ -342,13 +359,11 @@ fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
                                 text = item.name,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(
-                                text = "Price: $${item.price}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = { /* View 3D model */ }) {
-                            Icon(Icons.Default.Info, contentDescription = "View 3D Model")
+                            if (item.model3dUrl != null) {
+                                TextButton(onClick = { /* Show 3D model viewer */ }) {
+                                    Text("View 3D Model")
+                                }
+                            }
                         }
                     }
                 }
