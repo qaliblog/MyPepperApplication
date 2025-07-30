@@ -205,29 +205,42 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     var detectedObject by remember { mutableStateOf<String?>(null) }
     var interpreter by remember { mutableStateOf<Interpreter?>(null) }
     var labelMap by remember { mutableStateOf<List<String>>(emptyList()) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     // Load TFLite model and label map
     LaunchedEffect(Unit) {
-        hasCameraPermission = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-        if (interpreter == null) {
-            val modelBytes = context.assets.open("detect.tflite").use { it.readBytes() }
-            val modelBuffer = ByteBuffer.allocateDirect(modelBytes.size)
-            modelBuffer.put(modelBytes)
-            modelBuffer.rewind()
-            interpreter = Interpreter(modelBuffer)
-        }
-        if (labelMap.isEmpty()) {
-            val labels = mutableListOf<String>()
-            try {
-                context.assets.open("labelmap.txt").use { input ->
-                    BufferedReader(InputStreamReader(input)).useLines { lines ->
-                        lines.forEach { labels.add(it) }
-                    }
+        try {
+            hasCameraPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+            
+            if (interpreter == null) {
+                try {
+                    val modelBytes = context.assets.open("detect.tflite").use { it.readBytes() }
+                    val modelBuffer = ByteBuffer.allocateDirect(modelBytes.size)
+                    modelBuffer.put(modelBytes)
+                    modelBuffer.rewind()
+                    interpreter = Interpreter(modelBuffer)
+                } catch (e: Exception) {
+                    errorMessage = "Failed to load model: ${e.message}"
                 }
-            } catch (_: Exception) {}
-            labelMap = labels
+            }
+            
+            if (labelMap.isEmpty()) {
+                try {
+                    val labels = mutableListOf<String>()
+                    context.assets.open("labelmap.txt").use { input ->
+                        BufferedReader(InputStreamReader(input)).useLines { lines ->
+                            lines.forEach { labels.add(it) }
+                        }
+                    }
+                    labelMap = labels
+                } catch (e: Exception) {
+                    errorMessage = "Failed to load labels: ${e.message}"
+                }
+            }
+        } catch (e: Exception) {
+            errorMessage = "Initialization error: ${e.message}"
         }
     }
 
@@ -254,6 +267,24 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
         return
     }
 
+    if (errorMessage != null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("Error: $errorMessage", color = MaterialTheme.colorScheme.error)
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { errorMessage = null }) {
+                Text("Retry")
+            }
+        }
+        return
+    }
+
     AndroidView(
         factory = { previewView },
         modifier = Modifier
@@ -262,34 +293,44 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     )
 
     LaunchedEffect(cameraProviderFuture, interpreter, labelMap) {
-        val cameraProvider = cameraProviderFuture.get()
-        val preview = Preview.Builder().build().also {
-            it.setSurfaceProvider(previewView.surfaceProvider)
-        }
-        val imageAnalyzer = ImageAnalysis.Builder()
-            .setTargetResolution(Size(300, 300)) // assuming model input is 300x300
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
-        imageAnalyzer.setAnalyzer(executor) { imageProxy ->
-            val bitmap = imageProxyToBitmap(imageProxy, 300, 300)
-            if (bitmap != null && interpreter != null && labelMap.isNotEmpty()) {
-                val result = runTFLiteObjectDetection(bitmap, interpreter!!, labelMap)
-                val label = result?.first
-                if (label != null && detectedObject != label) {
-                    detectedObject = label
-                    val modelFile = if (label.lowercase().contains("pizza")) "pizza.glb" else null
-                    onObjectDetected(label, modelFile)
+        try {
+            val cameraProvider = cameraProviderFuture.get()
+            val preview = Preview.Builder().build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+            val imageAnalyzer = ImageAnalysis.Builder()
+                .setTargetResolution(Size(300, 300))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+            imageAnalyzer.setAnalyzer(executor) { imageProxy ->
+                try {
+                    val bitmap = imageProxyToBitmap(imageProxy, 300, 300)
+                    if (bitmap != null && interpreter != null && labelMap.isNotEmpty()) {
+                        val result = runTFLiteObjectDetection(bitmap, interpreter!!, labelMap)
+                        val label = result?.first
+                        if (label != null && detectedObject != label) {
+                            detectedObject = label
+                            val modelFile = if (label.lowercase().contains("pizza")) "pizza.glb" else null
+                            onObjectDetected(label, modelFile)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Log error but don't crash
+                    android.util.Log.e("ScanScreen", "Error processing frame: ${e.message}")
+                } finally {
+                    imageProxy.close()
                 }
             }
-            imageProxy.close()
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                preview,
+                imageAnalyzer
+            )
+        } catch (e: Exception) {
+            errorMessage = "Camera error: ${e.message}"
         }
-        cameraProvider.unbindAll()
-        cameraProvider.bindToLifecycle(
-            lifecycleOwner,
-            CameraSelector.DEFAULT_BACK_CAMERA,
-            preview,
-            imageAnalyzer
-        )
     }
 }
 
@@ -313,37 +354,43 @@ fun imageProxyToBitmap(imageProxy: ImageProxy, targetWidth: Int, targetHeight: I
 }
 
 fun runTFLiteObjectDetection(bitmap: Bitmap, interpreter: Interpreter, labelMap: List<String>): Pair<String, Float>? {
-    // Model input: [1, height, width, 3] float32
-    val input = Array(1) { Array(300) { Array(300) { FloatArray(3) } } }
-    for (y in 0 until 300) {
-        for (x in 0 until 300) {
-            val pixel = bitmap.getPixel(x, y)
-            input[0][y][x][0] = ((pixel shr 16) and 0xFF).toFloat() / 255.0f
-            input[0][y][x][1] = ((pixel shr 8) and 0xFF).toFloat() / 255.0f
-            input[0][y][x][2] = (pixel and 0xFF).toFloat() / 255.0f
+    return try {
+        // Model input: [1, height, width, 3] float32
+        val input = Array(1) { Array(300) { Array(300) { FloatArray(3) } } }
+        for (y in 0 until 300) {
+            for (x in 0 until 300) {
+                val pixel = bitmap.getPixel(x, y)
+                input[0][y][x][0] = ((pixel shr 16) and 0xFF).toFloat() / 255.0f
+                input[0][y][x][1] = ((pixel shr 8) and 0xFF).toFloat() / 255.0f
+                input[0][y][x][2] = (pixel and 0xFF).toFloat() / 255.0f
+            }
         }
+        // Model output: boxes, classes, scores, num
+        val outputBoxes = Array(1) { Array(10) { FloatArray(4) } }
+        val outputClasses = Array(1) { FloatArray(10) }
+        val outputScores = Array(1) { FloatArray(10) }
+        val outputNum = FloatArray(1)
+        val outputs = mapOf(
+            0 to outputBoxes,
+            1 to outputClasses,
+            2 to outputScores,
+            3 to outputNum
+        )
+        interpreter.runForMultipleInputsOutputs(arrayOf(input), outputs)
+        val scores = outputScores[0]
+        val classes = outputClasses[0]
+        val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: -1
+        if (maxIdx != -1 && scores[maxIdx] > 0.5f) {
+            val classIdx = classes[maxIdx].toInt()
+            val label = if (classIdx in labelMap.indices) labelMap[classIdx] else null
+            if (label != null) label to scores[maxIdx] else null
+        } else {
+            null
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("TFLite", "Inference error: ${e.message}")
+        null
     }
-    // Model output: boxes, classes, scores, num
-    val outputBoxes = Array(1) { Array(10) { FloatArray(4) } }
-    val outputClasses = Array(1) { FloatArray(10) }
-    val outputScores = Array(1) { FloatArray(10) }
-    val outputNum = FloatArray(1)
-    val outputs = mapOf(
-        0 to outputBoxes,
-        1 to outputClasses,
-        2 to outputScores,
-        3 to outputNum
-    )
-    interpreter.runForMultipleInputsOutputs(arrayOf(input), outputs)
-    val scores = outputScores[0]
-    val classes = outputClasses[0]
-    val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: -1
-    if (maxIdx != -1 && scores[maxIdx] > 0.5f) {
-        val classIdx = classes[maxIdx].toInt()
-        val label = if (classIdx in labelMap.indices) labelMap[classIdx] else null
-        return if (label != null) label to scores[maxIdx] else null
-    }
-    return null
 }
 
 @Composable
