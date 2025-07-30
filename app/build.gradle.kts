@@ -81,5 +81,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.3.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
     implementation("com.google.zxing:core:3.5.3")
-    implementation("com.google.mediapipe:tasks-vision:0.10.0")
+    // Remove MediaPipe Tasks
+    // implementation("com.google.mediapipe:tasks-vision:0.10.0")
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }

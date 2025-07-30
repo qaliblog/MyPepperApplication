@@ -42,12 +42,7 @@ import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import java.util.concurrent.Executors
 import androidx.compose.ui.viewinterop.AndroidView
-import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
-import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
-import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorOptions
-import com.google.mediapipe.tasks.vision.core.RunningMode
-import com.google.mediapipe.tasks.vision.core.VisionImage
-import android.graphics.Bitmap
+import org.tensorflow.lite.Interpreter
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.window.Dialog
 import java.io.BufferedReader
@@ -207,22 +202,28 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     val executor = remember { Executors.newSingleThreadExecutor() }
     var hasCameraPermission by remember { mutableStateOf(false) }
     var detectedObject by remember { mutableStateOf<String?>(null) }
-    var detector by remember { mutableStateOf<ObjectDetector?>(null) }
+    var interpreter by remember { mutableStateOf<Interpreter?>(null) }
+    var labelMap by remember { mutableStateOf<List<String>>(emptyList()) }
 
-    // Load MediaPipe ObjectDetector
+    // Load TFLite model and label map
     LaunchedEffect(Unit) {
         hasCameraPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
-        if (detector == null) {
-            val options = ObjectDetectorOptions.builder()
-                .setScoreThreshold(0.5f)
-                .setMaxResults(1)
-                .setRunningMode(RunningMode.IMAGE)
-                .build()
-            detector = ObjectDetector.createFromFileAndOptions(
-                context, "detect.tflite", options
-            )
+        if (interpreter == null) {
+            val model = context.assets.open("detect.tflite").use { it.readBytes() }
+            interpreter = Interpreter(model)
+        }
+        if (labelMap.isEmpty()) {
+            val labels = mutableListOf<String>()
+            try {
+                context.assets.open("labelmap.txt").use { input ->
+                    BufferedReader(InputStreamReader(input)).useLines { lines ->
+                        lines.forEach { labels.add(it) }
+                    }
+                }
+            } catch (_: Exception) {}
+            labelMap = labels
         }
     }
 
@@ -256,21 +257,20 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
             .padding(paddingValues)
     )
 
-    LaunchedEffect(cameraProviderFuture, detector) {
+    LaunchedEffect(cameraProviderFuture, interpreter, labelMap) {
         val cameraProvider = cameraProviderFuture.get()
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
         val imageAnalyzer = ImageAnalysis.Builder()
-            .setTargetResolution(Size(1280, 720))
+            .setTargetResolution(Size(300, 300)) // assuming model input is 300x300
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
         imageAnalyzer.setAnalyzer(executor) { imageProxy ->
-            val bitmap = imageProxyToBitmap(imageProxy)
-            if (bitmap != null && detector != null) {
-                val visionImage = VisionImage.fromBitmap(bitmap)
-                val result: ObjectDetectorResult = detector!!.detect(visionImage)
-                val label = result.detections.firstOrNull()?.categories?.firstOrNull()?.categoryName
+            val bitmap = imageProxyToBitmap(imageProxy, 300, 300)
+            if (bitmap != null && interpreter != null && labelMap.isNotEmpty()) {
+                val result = runTFLiteObjectDetection(bitmap, interpreter!!, labelMap)
+                val label = result?.first
                 if (label != null && detectedObject != label) {
                     detectedObject = label
                     val modelFile = if (label.lowercase().contains("pizza")) "pizza.glb" else null
@@ -289,7 +289,7 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     }
 }
 
-fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
+fun imageProxyToBitmap(imageProxy: ImageProxy, targetWidth: Int, targetHeight: Int): Bitmap? {
     val yBuffer = imageProxy.planes[0].buffer
     val uBuffer = imageProxy.planes[1].buffer
     val vBuffer = imageProxy.planes[2].buffer
@@ -304,7 +304,42 @@ fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
     val out = java.io.ByteArrayOutputStream()
     yuvImage.compressToJpeg(android.graphics.Rect(0, 0, imageProxy.width, imageProxy.height), 100, out)
     val imageBytes = out.toByteArray()
-    return android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+    val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+    return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+}
+
+fun runTFLiteObjectDetection(bitmap: Bitmap, interpreter: Interpreter, labelMap: List<String>): Pair<String, Float>? {
+    // Model input: [1, height, width, 3] float32
+    val input = Array(1) { Array(300) { Array(300) { FloatArray(3) } } }
+    for (y in 0 until 300) {
+        for (x in 0 until 300) {
+            val pixel = bitmap.getPixel(x, y)
+            input[0][y][x][0] = ((pixel shr 16) and 0xFF) / 255.0f
+            input[0][y][x][1] = ((pixel shr 8) and 0xFF) / 255.0f
+            input[0][y][x][2] = (pixel and 0xFF) / 255.0f
+        }
+    }
+    // Model output: boxes, classes, scores, num
+    val outputBoxes = Array(1) { Array(10) { FloatArray(4) } }
+    val outputClasses = Array(1) { FloatArray(10) }
+    val outputScores = Array(1) { FloatArray(10) }
+    val outputNum = FloatArray(1)
+    val outputs = mapOf(
+        0 to outputBoxes,
+        1 to outputClasses,
+        2 to outputScores,
+        3 to outputNum
+    )
+    interpreter.runForMultipleInputsOutputs(arrayOf(input), outputs)
+    val scores = outputScores[0]
+    val classes = outputClasses[0]
+    val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: -1
+    if (maxIdx != -1 && scores[maxIdx] > 0.5f) {
+        val classIdx = classes[maxIdx].toInt()
+        val label = if (classIdx in labelMap.indices) labelMap[classIdx] else null
+        return label to scores[maxIdx]
+    }
+    return null
 }
 
 @Composable
