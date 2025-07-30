@@ -65,7 +65,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
 
-    implementation(libs.androidx.core.ktx)
+    // Pin compatible versions for SDK 34
+    implementation("androidx.core:core:1.14.0")
+    implementation("androidx.core:core-ktx:1.14.0")
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
