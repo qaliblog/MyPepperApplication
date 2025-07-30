@@ -40,14 +40,7 @@ android {
     }
 }
 
-kapt {
-    arguments {
-        arg("room.schemaLocation", "$projectDir/schemas")
-        arg("room.incremental", "true")
-        arg("room.expandProjection", "true")
-        arg("room.skipQueryVerification", "true")
-    }
-}
+// Room and kapt removed for Termux compatibility
 
 dependencies {
     //noinspection UseTomlInstead
@@ -86,9 +79,4 @@ dependencies {
 
     // Coil (image loading, 2.3.0 is compatible)
     implementation("io.coil-kt:coil-compose:2.3.0")
-
-    // Room (2.5.2 is compatible)
-    implementation("androidx.room:room-runtime:2.5.2")
-    implementation("androidx.room:room-ktx:2.5.2")
-    kapt("androidx.room:room-compiler:2.5.2")
 }

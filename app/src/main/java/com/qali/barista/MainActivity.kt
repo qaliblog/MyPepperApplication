@@ -21,45 +21,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qali.barista.data.AppDatabase
-import com.qali.barista.data.FoodItemRepository
-import com.qali.barista.data.FoodItem
 import com.qali.barista.ui.BaristaViewModel
-import com.qali.barista.ui.BaristaViewModelFactory
+import com.qali.barista.ui.FoodItem
 import com.qali.barista.ui.theme.BaristaTheme
 
 class MainActivity : ComponentActivity() {
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            // Permission granted, can proceed with camera functionality
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Request camera permission
-        when {
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED -> {
-                // Permission already granted
-            }
-            else -> {
-                requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-            }
-        }
-
         setContent {
             BaristaTheme {
-                val database = AppDatabase.getDatabase(this)
-                val repository = FoodItemRepository(database.foodItemDao())
-                val viewModel: BaristaViewModel = viewModel(
-                    factory = BaristaViewModelFactory(repository)
-                )
+                val viewModel: BaristaViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
                 BaristaApp(viewModel)
             }
         }
