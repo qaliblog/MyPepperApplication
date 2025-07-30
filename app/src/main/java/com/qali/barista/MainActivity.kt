@@ -63,19 +63,19 @@ fun BaristaApp(viewModel: BaristaViewModel) {
                         onClick = { selectedTab = 0 }
                     )
                     NavigationBarItem(
-                        icon = { Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan") },
+                        icon = { Icon(Icons.Default.Search, contentDescription = "Scan") },
                         label = { Text("Scan") },
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 }
                     )
                     NavigationBarItem(
-                        icon = { Icon(Icons.Default.Inventory, contentDescription = "Inventory") },
+                        icon = { Icon(Icons.Default.List, contentDescription = "Inventory") },
                         label = { Text("Inventory") },
                         selected = selectedTab == 2,
                         onClick = { selectedTab = 2 }
                     )
                     NavigationBarItem(
-                        icon = { Icon(Icons.Default.ViewInAr, contentDescription = "3D Models") },
+                        icon = { Icon(Icons.Default.Info, contentDescription = "3D Models") },
                         label = { Text("3D Models") },
                         selected = selectedTab == 3,
                         onClick = { selectedTab = 3 }
@@ -148,12 +148,12 @@ fun HomeScreen(paddingValues: PaddingValues) {
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         QuickActionButton(
-                            icon = Icons.Default.QrCodeScanner,
+                            icon = Icons.Default.Search,
                             label = "Scan Item",
                             onClick = { /* Navigate to scan */ }
                         )
                         QuickActionButton(
-                            icon = Icons.Default.ViewInAr,
+                            icon = Icons.Default.Info,
                             label = "3D Models",
                             onClick = { /* Navigate to 3D models */ }
                         )
@@ -175,7 +175,7 @@ fun ScanScreen(paddingValues: PaddingValues) {
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
-            imageVector = Icons.Default.QrCodeScanner,
+            imageVector = Icons.Default.Search,
             contentDescription = "Scan",
             modifier = Modifier.size(120.dp),
             tint = MaterialTheme.colorScheme.primary
@@ -195,7 +195,7 @@ fun ScanScreen(paddingValues: PaddingValues) {
         Button(
             onClick = { /* Implement camera scanning */ }
         ) {
-            Icon(Icons.Default.Camera, contentDescription = null)
+            Icon(Icons.Default.Add, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("Start Scanning")
         }
@@ -229,7 +229,7 @@ fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Inventory,
+                            imageVector = Icons.Default.List,
                             contentDescription = "Empty Inventory",
                             modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
@@ -254,7 +254,7 @@ fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Restaurant,
+                            imageVector = Icons.Default.Favorite,
                             contentDescription = null,
                             modifier = Modifier.size(40.dp)
                         )
@@ -270,7 +270,7 @@ fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
                             )
                         }
                         IconButton(onClick = { /* View 3D model */ }) {
-                            Icon(Icons.Default.ViewInAr, contentDescription = "View 3D Model")
+                            Icon(Icons.Default.Info, contentDescription = "View 3D Model")
                         }
                     }
                 }
@@ -290,7 +290,7 @@ fun Models3DScreen(paddingValues: PaddingValues) {
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
-            imageVector = Icons.Default.ViewInAr,
+            imageVector = Icons.Default.Info,
             contentDescription = "3D Models",
             modifier = Modifier.size(120.dp),
             tint = MaterialTheme.colorScheme.primary
@@ -310,7 +310,7 @@ fun Models3DScreen(paddingValues: PaddingValues) {
         Button(
             onClick = { /* Implement 3D model viewer */ }
         ) {
-            Icon(Icons.Default.ViewInAr, contentDescription = null)
+            Icon(Icons.Default.Info, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("View Models")
         }
