@@ -410,7 +410,8 @@ fun Model3DDialog(modelFile: String, onDismiss: () -> Unit) {
                 val input = assetManager.open(modelFile)
                 val bytes = input.readBytes()
                 input.close()
-                modelViewer.loadModelGlb(bytes)
+                val buffer = java.nio.ByteBuffer.wrap(bytes)
+                modelViewer.loadModelGlb(buffer)
                 modelViewer.transformToUnitCube()
                 surfaceView
             },

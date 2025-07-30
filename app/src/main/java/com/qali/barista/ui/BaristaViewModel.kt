@@ -6,12 +6,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 // Simple in-memory data class
-class FoodItem(
+data class FoodItem(
     val id: Long = System.currentTimeMillis(),
     val name: String,
     val price: Double,
     val description: String = "",
-    val barcode: String? = null
+    val barcode: String? = null,
+    val model3dUrl: String? = null
 )
 
 class BaristaViewModel : ViewModel() {
