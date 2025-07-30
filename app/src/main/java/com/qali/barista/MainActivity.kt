@@ -42,10 +42,11 @@ import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import java.util.concurrent.Executors
 import androidx.compose.ui.viewinterop.AndroidView
-import org.tensorflow.lite.task.vision.detector.ObjectDetector
-import org.tensorflow.lite.task.vision.detector.Detection
-import org.tensorflow.lite.task.vision.detector.ObjectDetector.ObjectDetectorOptions
-import org.tensorflow.lite.support.image.TensorImage
+import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
+import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
+import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.core.VisionImage
 import android.graphics.Bitmap
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.window.Dialog
@@ -207,32 +208,21 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     var hasCameraPermission by remember { mutableStateOf(false) }
     var detectedObject by remember { mutableStateOf<String?>(null) }
     var detector by remember { mutableStateOf<ObjectDetector?>(null) }
-    var labelMap by remember { mutableStateOf<List<String>>(emptyList()) }
 
-    // Load TFLite model and label map
+    // Load MediaPipe ObjectDetector
     LaunchedEffect(Unit) {
         hasCameraPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
         if (detector == null) {
             val options = ObjectDetectorOptions.builder()
-                .setMaxResults(1)
                 .setScoreThreshold(0.5f)
+                .setMaxResults(1)
+                .setRunningMode(RunningMode.IMAGE)
                 .build()
             detector = ObjectDetector.createFromFileAndOptions(
                 context, "detect.tflite", options
             )
-        }
-        if (labelMap.isEmpty()) {
-            val labels = mutableListOf<String>()
-            try {
-                context.assets.open("labelmap.txt").use { input ->
-                    BufferedReader(InputStreamReader(input)).useLines { lines ->
-                        lines.forEach { labels.add(it) }
-                    }
-                }
-            } catch (_: Exception) {}
-            labelMap = labels
         }
     }
 
@@ -266,7 +256,7 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
             .padding(paddingValues)
     )
 
-    LaunchedEffect(cameraProviderFuture, detector, labelMap) {
+    LaunchedEffect(cameraProviderFuture, detector) {
         val cameraProvider = cameraProviderFuture.get()
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
@@ -277,12 +267,10 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
             .build()
         imageAnalyzer.setAnalyzer(executor) { imageProxy ->
             val bitmap = imageProxyToBitmap(imageProxy)
-            if (bitmap != null && detector != null && labelMap.isNotEmpty()) {
-                val tensorImage = TensorImage.fromBitmap(bitmap)
-                val results = detector!!.detect(tensorImage)
-                val category = results.firstOrNull()?.categories?.firstOrNull()
-                val labelIdx = category?.index ?: -1
-                val label = if (labelIdx in labelMap.indices) labelMap[labelIdx] else null
+            if (bitmap != null && detector != null) {
+                val visionImage = VisionImage.fromBitmap(bitmap)
+                val result: ObjectDetectorResult = detector!!.detect(visionImage)
+                val label = result.detections.firstOrNull()?.categories?.firstOrNull()?.categoryName
                 if (label != null && detectedObject != label) {
                     detectedObject = label
                     val modelFile = if (label.lowercase().contains("pizza")) "pizza.glb" else null
