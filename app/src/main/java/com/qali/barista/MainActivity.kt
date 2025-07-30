@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -193,7 +194,11 @@ fun ScanScreen(paddingValues: PaddingValues, onBarcodeScanned: (String) -> Unit 
     var hasCameraPermission by remember { mutableStateOf(false) }
     var scannedBarcode by remember { mutableStateOf<String?>(null) }
 
-    // Request camera permission
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { granted -> hasCameraPermission = granted }
+    )
+
     LaunchedEffect(Unit) {
         hasCameraPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.CAMERA
@@ -210,6 +215,10 @@ fun ScanScreen(paddingValues: PaddingValues, onBarcodeScanned: (String) -> Unit 
             verticalArrangement = Arrangement.Center
         ) {
             Text("Camera permission required to scan items.")
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                Text("Grant Camera Permission")
+            }
         }
         return
     }
