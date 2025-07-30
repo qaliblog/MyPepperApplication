@@ -51,6 +51,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import com.google.android.filament.utils.ModelViewer
 import android.view.SurfaceView
+import android.graphics.Bitmap
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -211,8 +212,11 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
             context, Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
         if (interpreter == null) {
-            val model = context.assets.open("detect.tflite").use { it.readBytes() }
-            interpreter = Interpreter(model)
+            val modelBytes = context.assets.open("detect.tflite").use { it.readBytes() }
+            val modelBuffer = ByteBuffer.allocateDirect(modelBytes.size)
+            modelBuffer.put(modelBytes)
+            modelBuffer.rewind()
+            interpreter = Interpreter(modelBuffer)
         }
         if (labelMap.isEmpty()) {
             val labels = mutableListOf<String>()
@@ -314,9 +318,9 @@ fun runTFLiteObjectDetection(bitmap: Bitmap, interpreter: Interpreter, labelMap:
     for (y in 0 until 300) {
         for (x in 0 until 300) {
             val pixel = bitmap.getPixel(x, y)
-            input[0][y][x][0] = ((pixel shr 16) and 0xFF) / 255.0f
-            input[0][y][x][1] = ((pixel shr 8) and 0xFF) / 255.0f
-            input[0][y][x][2] = (pixel and 0xFF) / 255.0f
+            input[0][y][x][0] = ((pixel shr 16) and 0xFF).toFloat() / 255.0f
+            input[0][y][x][1] = ((pixel shr 8) and 0xFF).toFloat() / 255.0f
+            input[0][y][x][2] = (pixel and 0xFF).toFloat() / 255.0f
         }
     }
     // Model output: boxes, classes, scores, num
@@ -337,7 +341,7 @@ fun runTFLiteObjectDetection(bitmap: Bitmap, interpreter: Interpreter, labelMap:
     if (maxIdx != -1 && scores[maxIdx] > 0.5f) {
         val classIdx = classes[maxIdx].toInt()
         val label = if (classIdx in labelMap.indices) labelMap[classIdx] else null
-        return label to scores[maxIdx]
+        return if (label != null) label to scores[maxIdx] else null
     }
     return null
 }
