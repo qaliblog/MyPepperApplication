@@ -92,6 +92,11 @@ This app is built with modern Android development practices:
 - MVVM architecture pattern
 - Material 3 design system
 
+## Assets
+
+- Place your TFLite object detection model (e.g., ssd_mobilenet_v1.tflite) in `app/src/main/assets/`.
+- Place your 3D model files (e.g., pizza.glb) in `app/src/main/assets/`.
+
 ## License
 
 This project is licensed under the MIT License.
