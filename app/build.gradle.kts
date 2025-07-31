@@ -81,8 +81,8 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.3.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
     implementation("com.google.zxing:core:3.5.3")
-    // Remove MediaPipe Tasks
-    // implementation("com.google.mediapipe:tasks-vision:0.10.0")
-    // Remove TensorFlow Lite since we're using a simpler approach
-    // implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    // MediaPipe Tasks for object detection
+    implementation("com.google.mediapipe:tasks-vision:0.10.0")
+    // TensorFlow Lite for MediaPipe
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }

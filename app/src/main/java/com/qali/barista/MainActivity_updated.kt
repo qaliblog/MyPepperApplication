@@ -26,18 +26,32 @@ import com.qali.barista.ui.BaristaViewModel
 import com.qali.barista.ui.FoodItem
 import com.qali.barista.ui.theme.BaristaTheme
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.window.Dialog
 import com.google.android.filament.utils.ModelViewer
 import android.view.SurfaceView
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.util.concurrent.Executors
+import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
+import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorOptions
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -186,15 +200,56 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     val previewView = remember { PreviewView(context) }
+    val executor = remember { Executors.newSingleThreadExecutor() }
     var hasCameraPermission by remember { mutableStateOf(false) }
     var isScanning by remember { mutableStateOf(false) }
     var scanResult by remember { mutableStateOf<String?>(null) }
+    var objectDetector by remember { mutableStateOf<ObjectDetector?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Check camera permission
+    // Initialize MediaPipe Object Detector
     LaunchedEffect(Unit) {
-        hasCameraPermission = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
+        try {
+            hasCameraPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+            
+            // Initialize MediaPipe Object Detector
+            val baseOptions = BaseOptions.builder()
+                .setModelAssetPath("efficientdet_lite0.tflite")
+                .build()
+            
+            val options = ObjectDetectorOptions.builder()
+                .setBaseOptions(baseOptions)
+                .setRunningMode(RunningMode.LIVE_STREAM)
+                .setMaxResults(5)
+                .setScoreThreshold(0.5f)
+                .setResultListener { detectionResult, image ->
+                    // Process detection results on main thread
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        if (detectionResult.detections().isNotEmpty()) {
+                            val detection = detectionResult.detections()[0]
+                            val category = detection.categories()[0]
+                            val label = category.categoryName()
+                            if (label != "background" && scanResult != label) {
+                                scanResult = label
+                                val modelFile = if (label.lowercase().contains("pizza")) "pizza.glb" else null
+                                onObjectDetected(label, modelFile)
+                            }
+                        }
+                    }
+                }
+                .setErrorListener { _, error ->
+                    android.util.Log.e("MediaPipe", "Object detection error: $error")
+                    errorMessage = "Detection error: $error"
+                }
+                .build()
+            
+            objectDetector = ObjectDetector.createFromOptions(context, options)
+        } catch (e: Exception) {
+            errorMessage = "Failed to initialize object detector: ${e.message}"
+            android.util.Log.e("ScanScreen", "Initialization error: ${e.message}")
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -215,6 +270,24 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
             Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
                 Text("Grant Camera Permission")
+            }
+        }
+        return
+    }
+
+    if (errorMessage != null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("Error: $errorMessage", color = MaterialTheme.colorScheme.error)
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { errorMessage = null }) {
+                Text("Retry")
             }
         }
         return
@@ -276,12 +349,9 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
                 Button(
                     onClick = { 
                         isScanning = true
-                        // Simulate object detection
-                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            val foodItems = listOf("Pizza", "Burger", "Coffee", "Sandwich", "Salad")
-                            scanResult = foodItems.random()
-                            isScanning = false
-                        }, 2000)
+                        // Start real-time object detection
+                        scanResult = null
+                        isScanning = false
                     },
                     enabled = !isScanning,
                     modifier = Modifier.fillMaxWidth()
@@ -296,32 +366,78 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
                     } else {
                         Icon(Icons.Default.Search, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Scan for Objects")
+                        Text("Start Object Detection")
                     }
                 }
             }
         }
     }
 
-    LaunchedEffect(cameraProviderFuture) {
+    LaunchedEffect(cameraProviderFuture, objectDetector) {
         try {
             val cameraProvider = cameraProviderFuture.get()
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
+            
+            val imageAnalyzer = ImageAnalysis.Builder()
+                .setTargetResolution(android.util.Size(640, 480))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+            
+            imageAnalyzer.setAnalyzer(executor) { imageProxy ->
+                try {
+                    if (objectDetector != null) {
+                        val bitmap = imageProxyToBitmap(imageProxy)
+                        if (bitmap != null) {
+                            val mediaImage = com.google.mediapipe.tasks.vision.core.VisionImage.fromBitmap(bitmap)
+                            objectDetector?.detectAsync(mediaImage, imageProxy.imageInfo.timestamp)
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("ScanScreen", "Error processing frame: ${e.message}")
+                } finally {
+                    imageProxy.close()
+                }
+            }
+            
             cameraProvider.unbindAll()
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_BACK_CAMERA,
-                preview
+                preview,
+                imageAnalyzer
             )
         } catch (e: Exception) {
             android.util.Log.e("ScanScreen", "Camera error: ${e.message}")
+            errorMessage = "Camera error: ${e.message}"
         }
     }
 }
 
-
+fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
+    return try {
+        val yBuffer = imageProxy.planes[0].buffer
+        val uBuffer = imageProxy.planes[1].buffer
+        val vBuffer = imageProxy.planes[2].buffer
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+        val nv21 = ByteArray(ySize + uSize + vSize)
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, imageProxy.width, imageProxy.height), 100, out)
+        val imageBytes = out.toByteArray()
+        val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+        bitmap
+    } catch (e: Exception) {
+        android.util.Log.e("ImageProcessing", "Error converting image proxy to bitmap: ${e.message}")
+        null
+    }
+}
 
 @Composable
 fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
@@ -590,4 +706,3 @@ fun AddItemDialog(
         }
     )
 }
-
