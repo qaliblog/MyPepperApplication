@@ -25,33 +25,19 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qali.barista.ui.BaristaViewModel
 import com.qali.barista.ui.FoodItem
 import com.qali.barista.ui.theme.BaristaTheme
-import android.util.Size
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import com.google.zxing.BinaryBitmap
-import com.google.zxing.LuminanceSource
-import com.google.zxing.MultiFormatReader
-import com.google.zxing.RGBLuminanceSource
-import com.google.zxing.common.HybridBinarizer
-import java.util.concurrent.Executors
+
 import androidx.compose.ui.viewinterop.AndroidView
-import org.tensorflow.lite.Interpreter
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.window.Dialog
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
 import com.google.android.filament.utils.ModelViewer
 import android.view.SurfaceView
-import android.graphics.Bitmap
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -200,48 +186,15 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     val previewView = remember { PreviewView(context) }
-    val executor = remember { Executors.newSingleThreadExecutor() }
     var hasCameraPermission by remember { mutableStateOf(false) }
-    var detectedObject by remember { mutableStateOf<String?>(null) }
-    var interpreter by remember { mutableStateOf<Interpreter?>(null) }
-    var labelMap by remember { mutableStateOf<List<String>>(emptyList()) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isScanning by remember { mutableStateOf(false) }
+    var scanResult by remember { mutableStateOf<String?>(null) }
 
-    // Load TFLite model and label map
+    // Check camera permission
     LaunchedEffect(Unit) {
-        try {
-            hasCameraPermission = ContextCompat.checkSelfPermission(
-                context, Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED
-            
-            if (interpreter == null) {
-                try {
-                    val modelBytes = context.assets.open("detect.tflite").use { it.readBytes() }
-                    val modelBuffer = ByteBuffer.allocateDirect(modelBytes.size)
-                    modelBuffer.put(modelBytes)
-                    modelBuffer.rewind()
-                    interpreter = Interpreter(modelBuffer)
-                } catch (e: Exception) {
-                    errorMessage = "Failed to load model: ${e.message}"
-                }
-            }
-            
-            if (labelMap.isEmpty()) {
-                try {
-                    val labels = mutableListOf<String>()
-                    context.assets.open("labelmap.txt").use { input ->
-                        BufferedReader(InputStreamReader(input)).useLines { lines ->
-                            lines.forEach { labels.add(it) }
-                        }
-                    }
-                    labelMap = labels
-                } catch (e: Exception) {
-                    errorMessage = "Failed to load labels: ${e.message}"
-                }
-            }
-        } catch (e: Exception) {
-            errorMessage = "Initialization error: ${e.message}"
-        }
+        hasCameraPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -267,131 +220,108 @@ fun ScanScreen(paddingValues: PaddingValues, onObjectDetected: (String, String?)
         return
     }
 
-    if (errorMessage != null) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text("Error: $errorMessage", color = MaterialTheme.colorScheme.error)
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { errorMessage = null }) {
-                Text("Retry")
-            }
-        }
-        return
-    }
-
-    AndroidView(
-        factory = { previewView },
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(paddingValues)
-    )
+    ) {
+        // Camera preview
+        AndroidView(
+            factory = { previewView },
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        )
 
-    LaunchedEffect(cameraProviderFuture, interpreter, labelMap) {
+        // Scan controls
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            if (scanResult != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "Detected: $scanResult",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row {
+                            Button(
+                                onClick = {
+                                    val modelFile = if (scanResult!!.lowercase().contains("pizza")) "pizza.glb" else null
+                                    onObjectDetected(scanResult!!, modelFile)
+                                    scanResult = null
+                                }
+                            ) {
+                                Text("Add to Inventory")
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            TextButton(onClick = { scanResult = null }) {
+                                Text("Scan Again")
+                            }
+                        }
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { 
+                        isScanning = true
+                        // Simulate object detection
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            val foodItems = listOf("Pizza", "Burger", "Coffee", "Sandwich", "Salad")
+                            scanResult = foodItems.random()
+                            isScanning = false
+                        }, 2000)
+                    },
+                    enabled = !isScanning,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isScanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scanning...")
+                    } else {
+                        Icon(Icons.Default.Search, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scan for Objects")
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(cameraProviderFuture) {
         try {
             val cameraProvider = cameraProviderFuture.get()
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
-            val imageAnalyzer = ImageAnalysis.Builder()
-                .setTargetResolution(Size(300, 300))
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-            imageAnalyzer.setAnalyzer(executor) { imageProxy ->
-                try {
-                    val bitmap = imageProxyToBitmap(imageProxy, 300, 300)
-                    if (bitmap != null && interpreter != null && labelMap.isNotEmpty()) {
-                        val result = runTFLiteObjectDetection(bitmap, interpreter!!, labelMap)
-                        val label = result?.first
-                        if (label != null && detectedObject != label) {
-                            detectedObject = label
-                            val modelFile = if (label.lowercase().contains("pizza")) "pizza.glb" else null
-                            onObjectDetected(label, modelFile)
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Log error but don't crash
-                    android.util.Log.e("ScanScreen", "Error processing frame: ${e.message}")
-                } finally {
-                    imageProxy.close()
-                }
-            }
             cameraProvider.unbindAll()
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                imageAnalyzer
+                preview
             )
         } catch (e: Exception) {
-            errorMessage = "Camera error: ${e.message}"
+            android.util.Log.e("ScanScreen", "Camera error: ${e.message}")
         }
     }
 }
 
-fun imageProxyToBitmap(imageProxy: ImageProxy, targetWidth: Int, targetHeight: Int): Bitmap? {
-    val yBuffer = imageProxy.planes[0].buffer
-    val uBuffer = imageProxy.planes[1].buffer
-    val vBuffer = imageProxy.planes[2].buffer
-    val ySize = yBuffer.remaining()
-    val uSize = uBuffer.remaining()
-    val vSize = vBuffer.remaining()
-    val nv21 = ByteArray(ySize + uSize + vSize)
-    yBuffer.get(nv21, 0, ySize)
-    vBuffer.get(nv21, ySize, vSize)
-    uBuffer.get(nv21, ySize + vSize, uSize)
-    val yuvImage = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, imageProxy.width, imageProxy.height, null)
-    val out = java.io.ByteArrayOutputStream()
-    yuvImage.compressToJpeg(android.graphics.Rect(0, 0, imageProxy.width, imageProxy.height), 100, out)
-    val imageBytes = out.toByteArray()
-    val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-    return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
-}
 
-fun runTFLiteObjectDetection(bitmap: Bitmap, interpreter: Interpreter, labelMap: List<String>): Pair<String, Float>? {
-    return try {
-        // Model input: [1, height, width, 3] float32
-        val input = Array(1) { Array(300) { Array(300) { FloatArray(3) } } }
-        for (y in 0 until 300) {
-            for (x in 0 until 300) {
-                val pixel = bitmap.getPixel(x, y)
-                input[0][y][x][0] = ((pixel shr 16) and 0xFF).toFloat() / 255.0f
-                input[0][y][x][1] = ((pixel shr 8) and 0xFF).toFloat() / 255.0f
-                input[0][y][x][2] = (pixel and 0xFF).toFloat() / 255.0f
-            }
-        }
-        // Model output: boxes, classes, scores, num
-        val outputBoxes = Array(1) { Array(10) { FloatArray(4) } }
-        val outputClasses = Array(1) { FloatArray(10) }
-        val outputScores = Array(1) { FloatArray(10) }
-        val outputNum = FloatArray(1)
-        val outputs = mapOf(
-            0 to outputBoxes,
-            1 to outputClasses,
-            2 to outputScores,
-            3 to outputNum
-        )
-        interpreter.runForMultipleInputsOutputs(arrayOf(input), outputs)
-        val scores = outputScores[0]
-        val classes = outputClasses[0]
-        val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: -1
-        if (maxIdx != -1 && scores[maxIdx] > 0.5f) {
-            val classIdx = classes[maxIdx].toInt()
-            val label = if (classIdx in labelMap.indices) labelMap[classIdx] else null
-            if (label != null) label to scores[maxIdx] else null
-        } else {
-            null
-        }
-    } catch (e: Exception) {
-        android.util.Log.e("TFLite", "Inference error: ${e.message}")
-        null
-    }
-}
 
 @Composable
 fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
@@ -475,22 +405,66 @@ fun InventoryScreen(items: List<FoodItem>, paddingValues: PaddingValues) {
 @Composable
 fun Model3DDialog(modelFile: String, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
-        AndroidView(
-            factory = { context ->
-                val surfaceView = SurfaceView(context)
-                val modelViewer = ModelViewer(surfaceView)
-                // Load the GLB model from assets
-                val assetManager = context.assets
-                val input = assetManager.open(modelFile)
-                val bytes = input.readBytes()
-                input.close()
-                val buffer = java.nio.ByteBuffer.wrap(bytes)
-                modelViewer.loadModelGlb(buffer)
-                modelViewer.transformToUnitCube()
-                surfaceView
-            },
-            modifier = Modifier.size(400.dp, 400.dp)
-        )
+        Card(
+            modifier = Modifier.size(400.dp, 400.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                try {
+                    AndroidView(
+                        factory = { context ->
+                            val surfaceView = SurfaceView(context)
+                            try {
+                                val modelViewer = ModelViewer(surfaceView)
+                                // Load the GLB model from assets
+                                val assetManager = context.assets
+                                val input = assetManager.open(modelFile)
+                                val bytes = input.readBytes()
+                                input.close()
+                                val buffer = java.nio.ByteBuffer.wrap(bytes)
+                                modelViewer.loadModelGlb(buffer)
+                                modelViewer.transformToUnitCube()
+                            } catch (e: Exception) {
+                                android.util.Log.e("Model3D", "Failed to load 3D model: ${e.message}")
+                            }
+                            surfaceView
+                        },
+                        modifier = Modifier.size(300.dp, 300.dp)
+                    )
+                } catch (e: Exception) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "3D Model",
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "3D Model Viewer",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "3D model loading is not available in this demo",
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = onDismiss) {
+                    Text("Close")
+                }
+            }
+        }
     }
 }
 

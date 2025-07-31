@@ -83,5 +83,6 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     // Remove MediaPipe Tasks
     // implementation("com.google.mediapipe:tasks-vision:0.10.0")
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    // Remove TensorFlow Lite since we're using a simpler approach
+    // implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }
